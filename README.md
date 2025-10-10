@@ -8,6 +8,14 @@ This fixes increasingly common annoying Anti-Cheat errors like Battlefield 6's:
 
 If you know of other software that cause issues, or have improvements please open an [issue](https://github.com/TCNOco/AutoHotkey-Finder/issues/new) or [pull request](https://github.com/TCNOco/AutoHotkey-Finder/pulls)!
 
+## No-download usage
+You can use the software by running a command in an Admin PowerShell window - No releases GitHub downloads, nothing!
+1. Hit Start/Windows and type `PowerShell`. Run PowerShell as Admin.
+2. Type: `iex (irm ahk.tc.ht)` and press Enter.
+3. Use the program as below.
+
+This works because of my other project, https://github.com/TCNOco/TcNo-TCHT. This lets you run scripts and more with just a simple command!
+
 ## Usage
 1. Download the latest release from the [Releases](https://github.com/TCNOco/AutoHotkey-Finder/releases) page.
 2. Run `Autohotkey Finder.exe` (no installation required).
