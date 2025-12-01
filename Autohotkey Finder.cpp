@@ -83,7 +83,7 @@ void flushInputBuffer() {
     std::wcin.clear();
     // Discard any remaining characters in the input buffer
     if (std::wcin.rdbuf()->in_avail() > 0) {
-        std::wcin.ignore(std::numeric_limits<std::streamsize>::max(), L'\n');
+        std::wcin.ignore((std::numeric_limits<std::streamsize>::max)(), L'\n');
     }
 }
 
