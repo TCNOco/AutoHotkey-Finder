@@ -1,8 +1,13 @@
 ﻿#pragma comment(lib, "Version.lib")
 #pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <shlobj.h>
+#include <objbase.h>
+#include <propkey.h>
 #include <string>
 #include <vector>
 #include <iostream>
@@ -98,6 +103,86 @@ void setAlwaysContinue() {
         RegSetValueExW(hKey, L"AlwaysContinue", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&val), sizeof(val));
         RegCloseKey(hKey);
     }
+}
+
+bool createDesktopShortcut() {
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to initialize COM: " << hr << L"\n";
+        return false;
+    }
+
+    IShellLinkW* pShellLink = nullptr;
+    hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pShellLink));
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to create ShellLink instance: " << hr << L"\n";
+        CoUninitialize();
+        return false;
+    }
+
+    // Get PowerShell path
+    wchar_t powershellPath[MAX_PATH];
+    DWORD pathSize = MAX_PATH;
+    if (SHGetFolderPathW(nullptr, CSIDL_SYSTEM, nullptr, SHGFP_TYPE_CURRENT, powershellPath) != S_OK) {
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get system folder path\n";
+        return false;
+    }
+    wcscat_s(powershellPath, L"\\WindowsPowerShell\\v1.0\\powershell.exe");
+
+    // Set the target path to PowerShell
+    pShellLink->SetPath(powershellPath);
+    
+    // Set the arguments to run the command
+    pShellLink->SetArguments(L"-NoProfile -ExecutionPolicy Bypass -Command \"iex (irm ahk.tc.ht)\"");
+    
+    // Set the working directory
+    wchar_t workingDir[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, workingDir) == S_OK) {
+        pShellLink->SetWorkingDirectory(workingDir);
+    }
+
+    // Set the description
+    pShellLink->SetDescription(L"TroubleChute Autohotkey Finder");
+
+    // Get the IPersistFile interface to save the shortcut
+    IPersistFile* pPersistFile = nullptr;
+    hr = pShellLink->QueryInterface(IID_PPV_ARGS(&pPersistFile));
+    if (FAILED(hr)) {
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get IPersistFile interface: " << hr << L"\n";
+        return false;
+    }
+
+    // Get desktop path
+    wchar_t desktopPath[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktopPath) != S_OK) {
+        pPersistFile->Release();
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get desktop folder path\n";
+        return false;
+    }
+
+    // Create the shortcut file path
+    wchar_t shortcutPath[MAX_PATH];
+    wcscpy_s(shortcutPath, desktopPath);
+    wcscat_s(shortcutPath, L"\\AHK Finder.lnk");
+
+    // Save the shortcut
+    hr = pPersistFile->Save(shortcutPath, TRUE);
+    pPersistFile->Release();
+    pShellLink->Release();
+    CoUninitialize();
+
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to save shortcut: " << hr << L"\n";
+        return false;
+    }
+
+    return true;
 }
 
 bool containsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {
@@ -247,7 +332,31 @@ void scanProcess(const PROCESSENTRY32W& pe, DWORD selfPid) {
     }
 }
 
-int wmain() {
+int wmain(int argc, wchar_t* argv[]) {
+    // Check for "s" option to create desktop shortcut
+    if (argc > 1 && (wcscmp(argv[1], L"s") == 0 || wcscmp(argv[1], L"-s") == 0 || wcscmp(argv[1], L"/s") == 0)) {
+        initDefaultConsoleColor();
+        setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::wcout << L"Creating desktop shortcut...\n";
+        setConsoleColor(g_defaultConsoleAttributes);
+        
+        if (createDesktopShortcut()) {
+            setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+            std::wcout << L"Desktop shortcut created successfully!\n";
+            setConsoleColor(g_defaultConsoleAttributes);
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+            return 0;
+        } else {
+            setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+            std::wcout << L"Failed to create desktop shortcut.\n";
+            setConsoleColor(g_defaultConsoleAttributes);
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+            return 1;
+        }
+    }
+
     initDefaultConsoleColor();
     setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
     std::wcout << L"Welcome to the TroubleChute AHK Finder.\n";
