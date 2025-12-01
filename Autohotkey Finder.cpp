@@ -84,6 +84,11 @@ std::mutex resultMutex;
 std::vector<ProcessInfo> flaggedProcesses;
 std::vector<ProcessInfo> unscannableProcesses;
 
+// List of executable names that should be terminated if found
+static const std::vector<std::wstring> terminationList = {
+    L"Flow.Launcher.exe"
+};
+
 // Registry path for persisting the "always continue" user preference
 static const wchar_t* REG_PATH = L"Software\\tc.ht\\AHKFinder";
 
@@ -197,6 +202,15 @@ bool containsIgnoreCase(const std::wstring& haystack, const std::wstring& needle
     return false;
 }
 
+bool isInTerminationList(const std::wstring& processName) {
+    for (const auto& exeName : terminationList) {
+        if (containsIgnoreCase(processName, exeName)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool loadFile(const std::wstring& path, std::vector<BYTE>& out) {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) return false;
@@ -286,6 +300,13 @@ void scanProcess(const PROCESSENTRY32W& pe, DWORD selfPid) {
     {
         std::lock_guard<std::mutex> lk(currentProcessMutex);
         currentProcess = name;
+    }
+
+    // Check if process is in termination list
+    if (isInTerminationList(name)) {
+        std::lock_guard<std::mutex> lk(resultMutex);
+        flaggedProcesses.push_back({ name, pid, L"In termination list" });
+        return;
     }
 
     if (containsIgnoreCase(name, L"autohotkey.exe") ||
