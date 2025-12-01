@@ -133,6 +133,20 @@ void setAlwaysContinue() {
     }
 }
 
+bool shortcutExists() {
+    wchar_t desktopPath[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktopPath) != S_OK) {
+        return false;
+    }
+
+    wchar_t shortcutPath[MAX_PATH];
+    wcscpy_s(shortcutPath, desktopPath);
+    wcscat_s(shortcutPath, L"\\AHK Finder.lnk");
+
+    DWORD dwAttrib = GetFileAttributesW(shortcutPath);
+    return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
 bool createDesktopShortcut() {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr)) {
@@ -755,12 +769,28 @@ int wmain(int argc, wchar_t* argv[]) {
     setConsoleColor(g_defaultConsoleAttributes);
     if (!isAlwaysContinue()) {
         flushInputBuffer();
-        std::wcout << L"Press 'y' to continue scanning, 'a' to always continue, any other key to exit: ";
+        std::wcout << L"Press 'y' to continue scanning, 'a' to always continue, 's' to create a Desktop Shortcut, any other key to exit: ";
         wchar_t ch = _getwch();
         std::wcout << ch << L"\n"; // Echo the character for user feedback
         if (ch == L'a' || ch == L'A') {
             setAlwaysContinue();
             std::wcout << L"'Always continue' preference saved. Future runs will skip this prompt.\n";
+        } else if (ch == L's' || ch == L'S') {
+            std::wcout << L"\nCreating desktop shortcut...\n";
+            if (createDesktopShortcut()) {
+                setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                std::wcout << L"Desktop shortcut created successfully!\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+                std::wcout << L"Press Enter to exit...";
+                std::wcin.get();
+            } else {
+                setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+                std::wcout << L"Failed to create desktop shortcut.\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+                std::wcout << L"Press Enter to exit...";
+                std::wcin.get();
+            }
+            return 0;
         } else if (ch != L'y' && ch != L'Y') {
             return 0;
         }
@@ -846,8 +876,31 @@ int wmain(int argc, wchar_t* argv[]) {
         setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
         std::wcout << L"No AutoHotkey processes detected.\n";
         setConsoleColor(g_defaultConsoleAttributes);
-        std::wcout << L"Press Enter to exit...";
-        std::wcin.get();
+        
+        // If always continue is enabled and shortcut doesn't exist, prompt for shortcut
+        if (isAlwaysContinue() && !shortcutExists()) {
+            flushInputBuffer();
+            std::wcout << L"\nDo you want a desktop shortcut to this app? 'Y' for yes, any other key to exit: ";
+            wchar_t ch = _getwch();
+            std::wcout << ch << L"\n";
+            if (ch == L'y' || ch == L'Y') {
+                std::wcout << L"\nCreating desktop shortcut...\n";
+                if (createDesktopShortcut()) {
+                    setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                    std::wcout << L"Desktop shortcut created successfully!\n";
+                    setConsoleColor(g_defaultConsoleAttributes);
+                } else {
+                    setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+                    std::wcout << L"Failed to create desktop shortcut.\n";
+                    setConsoleColor(g_defaultConsoleAttributes);
+                }
+                std::wcout << L"Press Enter to exit...";
+                std::wcin.get();
+            }
+        } else {
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+        }
         return 0;
     }
 
@@ -964,8 +1017,30 @@ int wmain(int argc, wchar_t* argv[]) {
             std::wcout << L"Exiting...\n";
         }
     } else {
-        std::wcout << L"Press Enter to exit...";
-        std::wcin.get();
+        // If always continue is enabled and shortcut doesn't exist, prompt for shortcut
+        if (isAlwaysContinue() && !shortcutExists()) {
+            flushInputBuffer();
+            std::wcout << L"\nDo you want a desktop shortcut to this app? 'Y' for yes, any other key to exit: ";
+            wchar_t ch = _getwch();
+            std::wcout << ch << L"\n";
+            if (ch == L'y' || ch == L'Y') {
+                std::wcout << L"\nCreating desktop shortcut...\n";
+                if (createDesktopShortcut()) {
+                    setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                    std::wcout << L"Desktop shortcut created successfully!\n";
+                    setConsoleColor(g_defaultConsoleAttributes);
+                } else {
+                    setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+                    std::wcout << L"Failed to create desktop shortcut.\n";
+                    setConsoleColor(g_defaultConsoleAttributes);
+                }
+                std::wcout << L"Press Enter to exit...";
+                std::wcin.get();
+            }
+        } else {
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+        }
     }
     
     return 0;
