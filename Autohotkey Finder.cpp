@@ -1,4 +1,5 @@
 ﻿#pragma comment(lib, "Version.lib")
+#pragma comment(lib, "Advapi32.lib")
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -18,7 +19,7 @@
 
 // This program scans running processes on the system to detect AutoHotkey executables.
 // It does not scan process memory; it examines file version info and binaries on disk.
-// Press 'y' and Enter to continue; any other key will exit.
+// Prompt: Press 'y' to continue scanning, 'a' to always continue (saved to registry), any other key exits.
 WORD g_defaultConsoleAttributes = 0;
 
 void initDefaultConsoleColor() {
@@ -77,6 +78,27 @@ std::mutex currentProcessMutex;
 std::mutex resultMutex;
 std::vector<ProcessInfo> flaggedProcesses;
 std::vector<ProcessInfo> unscannableProcesses;
+
+// Registry path for persisting the "always continue" user preference
+static const wchar_t* REG_PATH = L"Software\\tc.ht\\AHKFinder";
+
+bool isAlwaysContinue() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_PATH, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
+    DWORD val = 0, type = 0, size = sizeof(val);
+    LONG res = RegQueryValueExW(hKey, L"AlwaysContinue", nullptr, &type, reinterpret_cast<LPBYTE>(&val), &size);
+    RegCloseKey(hKey);
+    return (res == ERROR_SUCCESS && type == REG_DWORD && val == 1);
+}
+
+void setAlwaysContinue() {
+    HKEY hKey;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, REG_PATH, 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr) == ERROR_SUCCESS) {
+        DWORD val = 1;
+        RegSetValueExW(hKey, L"AlwaysContinue", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&val), sizeof(val));
+        RegCloseKey(hKey);
+    }
+}
 
 bool containsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {
     if (needle.empty()) return true;
@@ -238,11 +260,18 @@ int wmain() {
     std::wcout << L"It does not scan process memory; it examines file version info and binaries on disk.\n\n";
     std::wcout << L"While it should not trigger anticheats, please make sure all games with anticheats are closed before continuing!\n\n";
     setConsoleColor(g_defaultConsoleAttributes);
-    std::wcout << L"Press 'y' to continue scanning, any other key to exit: ";
-    wchar_t ch = _getwch();
-    std::wcout << ch << L"\n"; // Echo the character for user feedback
-    if (ch != L'y' && ch != L'Y') {
-        return 0;
+    if (!isAlwaysContinue()) {
+        std::wcout << L"Press 'y' to continue scanning, 'a' to always continue, any other key to exit: ";
+        wchar_t ch = _getwch();
+        std::wcout << ch << L"\n"; // Echo the character for user feedback
+        if (ch == L'a' || ch == L'A') {
+            setAlwaysContinue();
+            std::wcout << L"'Always continue' preference saved. Future runs will skip this prompt.\n";
+        } else if (ch != L'y' && ch != L'Y') {
+            return 0;
+        }
+    } else {
+        std::wcout << L"Auto-continue enabled (registry). Starting scan...\n";
     }
 
     Spinner spinner;
