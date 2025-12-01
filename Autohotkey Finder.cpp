@@ -353,7 +353,7 @@ bool createRelaunchShortcut(const std::vector<TerminatedProcess>& processes) {
     // Create the shortcut file path
     wchar_t shortcutPath[MAX_PATH];
     wcscpy_s(shortcutPath, desktopPath);
-    wcscat_s(shortcutPath, L"\\Relaunch Programs.lnk");
+    wcscat_s(shortcutPath, L"\\Relaunch Programs (AHK Finder).lnk");
 
     // Save the shortcut (overwrite if exists)
     hr = pPersistFile->Save(shortcutPath, TRUE);
@@ -923,6 +923,11 @@ int wmain(int argc, wchar_t* argv[]) {
             }
         }
         std::wcout << L"\n";
+        std::wcout << L"----------------\n";
+        setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::wcout << L"AutoHotKey is now closed. You can play games requiring it to be closed.\n\n";
+        setConsoleColor(g_defaultConsoleAttributes);
+        std::wcout << L"When done, you can restart them by pressing 'r', or hit 's' to create a desktop shortcut to relaunch them later. Otherwise press any other key to exit\n\n";
         setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
         std::wcout << L"Options:\n";
         std::wcout << L"  r - Restart all terminated processes\n";
