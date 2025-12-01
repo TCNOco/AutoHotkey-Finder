@@ -77,6 +77,13 @@ struct ProcessInfo {
     std::wstring reason;
 };
 
+struct TerminatedProcess {
+    std::wstring name;
+    std::wstring path;
+    std::wstring arguments;
+    std::wstring workingDir;
+};
+
 std::atomic<bool> scanning{ true };
 std::wstring currentProcess;
 std::mutex currentProcessMutex;
@@ -190,6 +197,162 @@ bool createDesktopShortcut() {
     return true;
 }
 
+bool restartProcesses(const std::vector<TerminatedProcess>& processes) {
+    int restarted = 0;
+    for (const auto& proc : processes) {
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi = { 0 };
+        
+        std::wstring cmdLine = L"\"";
+        cmdLine += proc.path;
+        cmdLine += L"\"";
+        if (!proc.arguments.empty()) {
+            cmdLine += L" ";
+            cmdLine += proc.arguments;
+        }
+
+        std::vector<wchar_t> cmdLineBuf(cmdLine.begin(), cmdLine.end());
+        cmdLineBuf.push_back(L'\0');
+
+        std::wstring workingDir = proc.workingDir;
+        if (workingDir.empty() && !proc.path.empty()) {
+            size_t lastSlash = proc.path.find_last_of(L"\\/");
+            if (lastSlash != std::wstring::npos) {
+                workingDir = proc.path.substr(0, lastSlash + 1);
+            }
+        }
+
+        if (CreateProcessW(
+            proc.path.c_str(),
+            cmdLineBuf.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            0,
+            nullptr,
+            workingDir.empty() ? nullptr : workingDir.c_str(),
+            &si,
+            &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            std::wcout << L"Restarted: " << proc.name << L"\n";
+            restarted++;
+        } else {
+            std::wcout << L"Failed to restart: " << proc.name << L" (Error: " << GetLastError() << L")\n";
+        }
+    }
+    return restarted > 0;
+}
+
+bool createRelaunchShortcut(const std::vector<TerminatedProcess>& processes) {
+    if (processes.empty()) {
+        return false;
+    }
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to initialize COM: " << hr << L"\n";
+        return false;
+    }
+
+    IShellLinkW* pShellLink = nullptr;
+    hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pShellLink));
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to create ShellLink instance: " << hr << L"\n";
+        CoUninitialize();
+        return false;
+    }
+
+    // Get PowerShell path
+    wchar_t powershellPath[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_SYSTEM, nullptr, SHGFP_TYPE_CURRENT, powershellPath) != S_OK) {
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get system folder path\n";
+        return false;
+    }
+    wcscat_s(powershellPath, L"\\WindowsPowerShell\\v1.0\\powershell.exe");
+
+    // Build PowerShell command to restart all processes
+    std::wstring psCommand = L"-NoProfile -ExecutionPolicy Bypass -Command \"";
+    for (size_t i = 0; i < processes.size(); ++i) {
+        const auto& proc = processes[i];
+        if (i > 0) psCommand += L"; ";
+        psCommand += L"Start-Process -FilePath '";
+        psCommand += proc.path;
+        psCommand += L"'";
+        if (!proc.arguments.empty()) {
+            psCommand += L" -ArgumentList '";
+            // Escape single quotes in arguments
+            std::wstring escapedArgs = proc.arguments;
+            size_t pos = 0;
+            while ((pos = escapedArgs.find(L"'", pos)) != std::wstring::npos) {
+                escapedArgs.replace(pos, 1, L"''");
+                pos += 2;
+            }
+            psCommand += escapedArgs;
+            psCommand += L"'";
+        }
+        if (!proc.workingDir.empty()) {
+            psCommand += L" -WorkingDirectory '";
+            psCommand += proc.workingDir;
+            psCommand += L"'";
+        }
+    }
+    psCommand += L"\"";
+
+    // Set the target path to PowerShell
+    pShellLink->SetPath(powershellPath);
+    pShellLink->SetArguments(psCommand.c_str());
+    
+    // Set the working directory
+    wchar_t workingDir[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, workingDir) == S_OK) {
+        pShellLink->SetWorkingDirectory(workingDir);
+    }
+
+    // Set the description
+    pShellLink->SetDescription(L"Relaunch Programs - Autohotkey Finder");
+
+    // Get the IPersistFile interface to save the shortcut
+    IPersistFile* pPersistFile = nullptr;
+    hr = pShellLink->QueryInterface(IID_PPV_ARGS(&pPersistFile));
+    if (FAILED(hr)) {
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get IPersistFile interface: " << hr << L"\n";
+        return false;
+    }
+
+    // Get desktop path
+    wchar_t desktopPath[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_DESKTOP, nullptr, SHGFP_TYPE_CURRENT, desktopPath) != S_OK) {
+        pPersistFile->Release();
+        pShellLink->Release();
+        CoUninitialize();
+        std::wcerr << L"Failed to get desktop folder path\n";
+        return false;
+    }
+
+    // Create the shortcut file path
+    wchar_t shortcutPath[MAX_PATH];
+    wcscpy_s(shortcutPath, desktopPath);
+    wcscat_s(shortcutPath, L"\\Relaunch Programs.lnk");
+
+    // Save the shortcut (overwrite if exists)
+    hr = pPersistFile->Save(shortcutPath, TRUE);
+    pPersistFile->Release();
+    pShellLink->Release();
+    CoUninitialize();
+
+    if (FAILED(hr)) {
+        std::wcerr << L"Failed to save shortcut: " << hr << L"\n";
+        return false;
+    }
+
+    return true;
+}
+
 bool containsIgnoreCase(const std::wstring& haystack, const std::wstring& needle) {
     if (needle.empty()) return true;
     for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
@@ -270,7 +433,191 @@ bool GetVersionStringValue(const std::wstring& filePath,
     return true;
 }
 
-bool terminateProcess(DWORD pid, const std::wstring& name) {
+// NtQueryInformationProcess structures and constants
+#ifndef NTSTATUS
+typedef LONG NTSTATUS;
+#endif
+
+typedef NTSTATUS (WINAPI *PNtQueryInformationProcess)(
+    HANDLE ProcessHandle,
+    DWORD ProcessInformationClass,
+    PVOID ProcessInformation,
+    DWORD ProcessInformationLength,
+    PDWORD ReturnLength
+);
+
+#define ProcessCommandLineInformation 60
+
+typedef struct _UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
+
+typedef struct _PROCESS_BASIC_INFORMATION {
+    PVOID Reserved1;
+    PVOID PebBaseAddress;
+    PVOID Reserved2[2];
+    ULONG_PTR UniqueProcessId;
+    PVOID Reserved3;
+} PROCESS_BASIC_INFORMATION, *PPROCESS_BASIC_INFORMATION;
+
+bool getProcessCommandLine(DWORD pid, std::wstring& outCmdLine) {
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        return false;
+    }
+
+    // Load NtDll
+    HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+    if (!hNtdll) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    PNtQueryInformationProcess NtQueryInformationProcess = 
+        (PNtQueryInformationProcess)GetProcAddress(hNtdll, "NtQueryInformationProcess");
+    if (!NtQueryInformationProcess) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // Get PEB address
+    PROCESS_BASIC_INFORMATION pbi = {0};
+    DWORD returnLength = 0;
+    NTSTATUS status = NtQueryInformationProcess(hProcess, 0, &pbi, sizeof(pbi), &returnLength);
+    if (status != 0 || !pbi.PebBaseAddress) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // Read PEB
+    PVOID pebAddress = pbi.PebBaseAddress;
+    PVOID processParameters = nullptr;
+    SIZE_T bytesRead = 0;
+    
+    // Read ProcessParameters pointer from PEB (offset 0x20 on x64, 0x10 on x86)
+#ifdef _WIN64
+    if (!ReadProcessMemory(hProcess, (PBYTE)pebAddress + 0x20, &processParameters, sizeof(PVOID), &bytesRead)) {
+        CloseHandle(hProcess);
+        return false;
+    }
+#else
+    if (!ReadProcessMemory(hProcess, (PBYTE)pebAddress + 0x10, &processParameters, sizeof(PVOID), &bytesRead)) {
+        CloseHandle(hProcess);
+        return false;
+    }
+#endif
+
+    if (!processParameters) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // Read CommandLine UNICODE_STRING (offset 0x70 on x64, 0x40 on x86)
+    UNICODE_STRING cmdLine = {0};
+#ifdef _WIN64
+    if (!ReadProcessMemory(hProcess, (PBYTE)processParameters + 0x70, &cmdLine, sizeof(UNICODE_STRING), &bytesRead)) {
+        CloseHandle(hProcess);
+        return false;
+    }
+#else
+    if (!ReadProcessMemory(hProcess, (PBYTE)processParameters + 0x40, &cmdLine, sizeof(UNICODE_STRING), &bytesRead)) {
+        CloseHandle(hProcess);
+        return false;
+    }
+#endif
+
+    if (!cmdLine.Buffer || cmdLine.Length == 0) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // Read the command line string
+    std::vector<wchar_t> buffer(cmdLine.Length / sizeof(wchar_t) + 1);
+    if (!ReadProcessMemory(hProcess, cmdLine.Buffer, buffer.data(), cmdLine.Length, &bytesRead)) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    buffer[cmdLine.Length / sizeof(wchar_t)] = L'\0';
+    outCmdLine = buffer.data();
+    CloseHandle(hProcess);
+    return true;
+}
+
+bool getProcessInfo(DWORD pid, const std::wstring& name, TerminatedProcess& outInfo) {
+    outInfo.name = name;
+    outInfo.path.clear();
+    outInfo.arguments.clear();
+    outInfo.workingDir.clear();
+
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!hProc) {
+        return false;
+    }
+
+    // Get process path first (fallback)
+    wchar_t buf[MAX_PATH];
+    DWORD len = _countof(buf);
+    std::wstring fallbackPath;
+    if (QueryFullProcessImageNameW(hProc, 0, buf, &len)) {
+        fallbackPath = buf;
+        outInfo.path = fallbackPath;
+        // Extract working directory from path as fallback
+        size_t lastSlash = fallbackPath.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) {
+            outInfo.workingDir = fallbackPath.substr(0, lastSlash + 1);
+        }
+    }
+
+    // Get command line (this is more accurate)
+    std::wstring cmdLine;
+    if (getProcessCommandLine(pid, cmdLine)) {
+        // Parse command line to separate path and arguments
+        if (!cmdLine.empty()) {
+            // Remove quotes if present
+            if (cmdLine[0] == L'"') {
+                size_t endQuote = cmdLine.find(L'"', 1);
+                if (endQuote != std::wstring::npos) {
+                    outInfo.path = cmdLine.substr(1, endQuote - 1);
+                    if (endQuote + 1 < cmdLine.length() && cmdLine[endQuote + 1] == L' ') {
+                        outInfo.arguments = cmdLine.substr(endQuote + 2);
+                    }
+                } else {
+                    outInfo.path = cmdLine;
+                }
+            } else {
+                // No quotes, find first space
+                size_t firstSpace = cmdLine.find(L' ');
+                if (firstSpace != std::wstring::npos) {
+                    outInfo.path = cmdLine.substr(0, firstSpace);
+                    outInfo.arguments = cmdLine.substr(firstSpace + 1);
+                } else {
+                    outInfo.path = cmdLine;
+                }
+            }
+            // Update working directory from new path if we got it from command line
+            if (!outInfo.path.empty()) {
+                size_t lastSlash = outInfo.path.find_last_of(L"\\/");
+                if (lastSlash != std::wstring::npos) {
+                    outInfo.workingDir = outInfo.path.substr(0, lastSlash + 1);
+                }
+            }
+        }
+    }
+
+    CloseHandle(hProc);
+    return !outInfo.path.empty();
+}
+
+bool terminateProcess(DWORD pid, const std::wstring& name, std::vector<TerminatedProcess>& terminatedList) {
+    // Get process info before terminating
+    TerminatedProcess procInfo;
+    if (getProcessInfo(pid, name, procInfo)) {
+        terminatedList.push_back(procInfo);
+    }
+
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
     if (!hProcess) {
         std::wcout << L"Failed to open process " << name << L" (PID " << pid << L") for termination.\n";
@@ -508,13 +855,15 @@ int wmain(int argc, wchar_t* argv[]) {
         return 0;
     }
 
+    std::vector<TerminatedProcess> terminatedProcesses;
+    
     try {
         int choice = std::stoi(input);
         if (choice == 0) {
             std::wcout << L"\nAttempting to kill all AutoHotkey processes...\n";
             int killed = 0;
             for (const auto& proc : flaggedProcesses) {
-                if (terminateProcess(proc.pid, proc.name)) {
+                if (terminateProcess(proc.pid, proc.name, terminatedProcesses)) {
                     killed++;
                 }
             }
@@ -523,17 +872,74 @@ int wmain(int argc, wchar_t* argv[]) {
         else if (choice >= 1 && choice <= static_cast<int>(flaggedProcesses.size())) {
             const auto& proc = flaggedProcesses[choice - 1];
             std::wcout << L"\nAttempting to kill " << proc.name << L" (PID " << proc.pid << L")...\n";
-            terminateProcess(proc.pid, proc.name);
+            terminateProcess(proc.pid, proc.name, terminatedProcesses);
         }
         else {
             std::wcout << L"Invalid choice. Exiting...\n";
+            return 0;
         }
     }
     catch (...) {
         std::wcout << L"Invalid input. Exiting...\n";
+        return 0;
     }
 
-    std::wcout << L"Press Enter to exit...";
-    std::wcin.get();
+    // Show terminated processes with their launch arguments
+    if (!terminatedProcesses.empty()) {
+        std::wcout << L"\n";
+        setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+        std::wcout << L"Terminated processes with launch arguments:\n";
+        setConsoleColor(g_defaultConsoleAttributes);
+        for (size_t i = 0; i < terminatedProcesses.size(); ++i) {
+            const auto& proc = terminatedProcesses[i];
+            std::wcout << L" " << (i + 1) << L". " << proc.name << L"\n";
+            std::wcout << L"    Path: " << proc.path << L"\n";
+            if (!proc.arguments.empty()) {
+                std::wcout << L"    Arguments: " << proc.arguments << L"\n";
+            }
+            if (!proc.workingDir.empty()) {
+                std::wcout << L"    Working Directory: " << proc.workingDir << L"\n";
+            }
+        }
+        std::wcout << L"\n";
+        setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::wcout << L"Options:\n";
+        std::wcout << L"  r - Restart all terminated processes\n";
+        std::wcout << L"  s - Create/Update 'Relaunch Programs' shortcut\n";
+        std::wcout << L"  Any other key - Exit\n";
+        std::wcout << L"\nEnter your choice: ";
+        setConsoleColor(g_defaultConsoleAttributes);
+        
+        wchar_t ch = _getwch();
+        std::wcout << ch << L"\n";
+        
+        if (ch == L'r' || ch == L'R') {
+            std::wcout << L"\nRestarting processes...\n";
+            restartProcesses(terminatedProcesses);
+            std::wcout << L"\nPress Enter to exit...";
+            std::wcin.get();
+        }
+        else if (ch == L's' || ch == L'S') {
+            std::wcout << L"\nCreating/updating 'Relaunch Programs' shortcut...\n";
+            if (createRelaunchShortcut(terminatedProcesses)) {
+                setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                std::wcout << L"Shortcut created/updated successfully!\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+            } else {
+                setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+                std::wcout << L"Failed to create shortcut.\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+            }
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+        }
+        else {
+            std::wcout << L"Exiting...\n";
+        }
+    } else {
+        std::wcout << L"Press Enter to exit...";
+        std::wcin.get();
+    }
+    
     return 0;
 }
