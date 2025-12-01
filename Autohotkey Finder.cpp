@@ -985,6 +985,7 @@ int wmain(int argc, wchar_t* argv[]) {
         std::wcout << L"Options:\n";
         std::wcout << L"  r - Restart all terminated processes\n";
         std::wcout << L"  s - Create/Update 'Relaunch Programs' shortcut\n";
+        std::wcout << L"  c - Create shortcut to the AHK Finder program\n";
         std::wcout << L"  Any other key - Exit\n";
         std::wcout << L"\nEnter your choice: ";
         setConsoleColor(g_defaultConsoleAttributes);
@@ -1008,6 +1009,20 @@ int wmain(int argc, wchar_t* argv[]) {
             } else {
                 setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
                 std::wcout << L"Failed to create shortcut.\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+            }
+            std::wcout << L"Press Enter to exit...";
+            std::wcin.get();
+        }
+        else if (ch == L'c' || ch == L'C') {
+            std::wcout << L"\nCreating desktop shortcut to AHK Finder...\n";
+            if (createDesktopShortcut()) {
+                setConsoleColor(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                std::wcout << L"Desktop shortcut created successfully!\n";
+                setConsoleColor(g_defaultConsoleAttributes);
+            } else {
+                setConsoleColor(FOREGROUND_RED | FOREGROUND_INTENSITY);
+                std::wcout << L"Failed to create desktop shortcut.\n";
                 setConsoleColor(g_defaultConsoleAttributes);
             }
             std::wcout << L"Press Enter to exit...";
