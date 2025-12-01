@@ -21,6 +21,7 @@
 #include <set>
 #include <map>
 #include <conio.h>
+#include <limits>
 
 // This program scans running processes on the system to detect AutoHotkey executables.
 // It does not scan process memory; it examines file version info and binaries on disk.
@@ -69,6 +70,21 @@ void clearConsoleLine()
     FillConsoleOutputAttribute(hConsole, csbi.wAttributes, width, cursorPos, &charsWritten);
 
     SetConsoleCursorPosition(hConsole, cursorPos);
+}
+
+void flushInputBuffer() {
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    if (hStdin == INVALID_HANDLE_VALUE) return;
+    
+    // Flush the console input buffer
+    FlushConsoleInputBuffer(hStdin);
+    
+    // Clear any buffered input from cin
+    std::wcin.clear();
+    // Discard any remaining characters in the input buffer
+    if (std::wcin.rdbuf()->in_avail() > 0) {
+        std::wcin.ignore(std::numeric_limits<std::streamsize>::max(), L'\n');
+    }
 }
 
 struct ProcessInfo {
@@ -738,6 +754,7 @@ int wmain(int argc, wchar_t* argv[]) {
     std::wcout << L"While it should not trigger anticheats, please make sure all games with anticheats are closed before continuing!\n\n";
     setConsoleColor(g_defaultConsoleAttributes);
     if (!isAlwaysContinue()) {
+        flushInputBuffer();
         std::wcout << L"Press 'y' to continue scanning, 'a' to always continue, any other key to exit: ";
         wchar_t ch = _getwch();
         std::wcout << ch << L"\n"; // Echo the character for user feedback
@@ -806,6 +823,9 @@ int wmain(int argc, wchar_t* argv[]) {
     scanning = false;
     spinThread.join();
 
+    // Clear any keypresses that occurred during scanning
+    flushInputBuffer();
+
     std::wcout << L"\n";
 
     if (!unscannableProcesses.empty()) {
@@ -847,6 +867,7 @@ int wmain(int argc, wchar_t* argv[]) {
     std::wcout << L"\nEnter your choice: ";
     setConsoleColor(g_defaultConsoleAttributes);
 
+    flushInputBuffer();
     std::wstring input;
     std::getline(std::wcin, input);
 
@@ -910,6 +931,7 @@ int wmain(int argc, wchar_t* argv[]) {
         std::wcout << L"\nEnter your choice: ";
         setConsoleColor(g_defaultConsoleAttributes);
         
+        flushInputBuffer();
         wchar_t ch = _getwch();
         std::wcout << ch << L"\n";
         
