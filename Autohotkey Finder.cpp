@@ -148,6 +148,11 @@ bool shortcutExists() {
 }
 
 bool createDesktopShortcut() {
+    // Define SLDF_RUNAS_USER if not already defined (for older SDKs)
+    #ifndef SLDF_RUNAS_USER
+    #define SLDF_RUNAS_USER 0x2000
+    #endif
+
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr)) {
         std::wcerr << L"Failed to initialize COM: " << hr << L"\n";
@@ -187,6 +192,19 @@ bool createDesktopShortcut() {
 
     // Set the description
     pShellLink->SetDescription(L"TroubleChute Autohotkey Finder");
+
+    // Set the shortcut to run as administrator
+    IShellLinkDataList* pShellLinkDataList = nullptr;
+    hr = pShellLink->QueryInterface(IID_PPV_ARGS(&pShellLinkDataList));
+    if (SUCCEEDED(hr)) {
+        DWORD dwFlags = 0;
+        hr = pShellLinkDataList->GetFlags(&dwFlags);
+        if (SUCCEEDED(hr)) {
+            dwFlags |= SLDF_RUNAS_USER;
+            hr = pShellLinkDataList->SetFlags(dwFlags);
+        }
+        pShellLinkDataList->Release();
+    }
 
     // Get the IPersistFile interface to save the shortcut
     IPersistFile* pPersistFile = nullptr;
